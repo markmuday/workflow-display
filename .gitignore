@@ -220,3 +220,5 @@ __marimo__/
 .vitepress/cache
 # Vite-specific build output
 .vite/
+
+/ui/node_modules
