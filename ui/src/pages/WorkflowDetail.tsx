@@ -38,10 +38,15 @@ export function WorkflowDetailPage() {
         <Button variant="ghost" size="sm" className="mb-4 -ml-2" onClick={() => navigate("/")}>
           ← Back
         </Button>
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">{workflow.display_name}</h1>
-          <Badge variant="secondary" className="uppercase text-xs">{workflow.us_state}</Badge>
-          <Badge variant="outline" className="text-xs">{workflow.type}</Badge>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold">{workflow.display_name}</h1>
+            <Badge variant="secondary" className="uppercase text-xs">{workflow.us_state}</Badge>
+            <Badge variant="outline" className="text-xs">{workflow.type}</Badge>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${workflow.id}/edit`)}>
+            Edit
+          </Button>
         </div>
         {workflow.description && (
           <p className="text-muted-foreground mt-1 text-sm">{workflow.description}</p>

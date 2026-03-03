@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"
 import { WorkflowList } from "@/pages/WorkflowList"
 import { WorkflowDetailPage } from "@/pages/WorkflowDetail"
+import { WorkflowEditPage } from "@/pages/WorkflowEdit"
 
 export function App() {
   return (
@@ -8,6 +9,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<WorkflowList />} />
         <Route path="/workflow/:id" element={<WorkflowDetailPage />} />
+        <Route path="/workflow/:id/edit" element={<WorkflowEditPage />} />
       </Routes>
     </BrowserRouter>
   )
