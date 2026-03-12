@@ -151,7 +151,7 @@ def save_workflow(id):
                (name, display_name, description, type, ordinal, workflow_step_name, workflow_name)
                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id''',
             (opt['name'], opt['display_name'], opt.get('description'),
-             opt.get('type'), opt.get('ordinal', 0), opt['step_name'], workflow['name'])
+             opt.get('type', 'button'), opt.get('ordinal', 0), opt['step_name'], workflow['name'])
         )
         option_id_map[opt['client_id']] = str(rows[0]['id'])
 

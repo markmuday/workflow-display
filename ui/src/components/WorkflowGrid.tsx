@@ -54,6 +54,22 @@ function saveLayout(workflowId: string, layout: LayoutState) {
   localStorage.setItem(`workflow-grid-${workflowId}`, JSON.stringify(layout))
 }
 
+// ── Muted steps persistence ───────────────────────────────────────────────────
+
+function loadMutedSteps(workflowId: string): Set<string> {
+  try {
+    const saved = localStorage.getItem(`workflow-muted-${workflowId}`)
+    if (saved) return new Set(JSON.parse(saved) as string[])
+  } catch {
+    // ignore
+  }
+  return new Set()
+}
+
+function saveMutedSteps(workflowId: string, muted: Set<string>) {
+  localStorage.setItem(`workflow-muted-${workflowId}`, JSON.stringify([...muted]))
+}
+
 // ── Arrow computation ─────────────────────────────────────────────────────────
 
 interface ArrowPath {
@@ -62,12 +78,15 @@ interface ArrowPath {
   labelX: number
   labelY: number
   label: string
+  sourceStepId: string
+  targetStepId: string
 }
 
 function useArrowPaths(
   workflow: WorkflowDetail,
   layout: LayoutState,
-  containerRef: RefObject<HTMLDivElement | null>
+  containerRef: RefObject<HTMLDivElement | null>,
+  mutedSteps: Set<string>
 ): ArrowPath[] {
   const [paths, setPaths] = useState<ArrowPath[]>([])
 
@@ -97,6 +116,7 @@ function useArrowPaths(
       const newPaths: ArrowPath[] = []
 
       for (const step of workflow.steps) {
+        if (mutedSteps.has(step.id)) continue
         const srcPos = layout[step.id]
         if (!srcPos) continue
         const src = cardBounds(step.id)
@@ -107,6 +127,7 @@ function useArrowPaths(
             if (!action.next_workflow_step_name) continue
             const tgt = stepByName[action.next_workflow_step_name]
             if (!tgt || tgt.id === step.id) continue
+            if (mutedSteps.has(tgt.id)) continue
             const tgtPos = layout[tgt.id]
             if (!tgtPos) continue
             const tgtB = cardBounds(tgt.id)
@@ -176,6 +197,8 @@ function useArrowPaths(
               labelX: lx,
               labelY: ly - 6,
               label: label.length > 45 ? label.slice(0, 42) + "…" : label,
+              sourceStepId: step.id,
+              targetStepId: tgt.id,
             })
           }
         }
@@ -189,9 +212,45 @@ function useArrowPaths(
     const observer = new ResizeObserver(compute)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [workflow, layout])
+  }, [workflow, layout, mutedSteps])
 
   return paths
+}
+
+// ── Mute icon ─────────────────────────────────────────────────────────────────
+
+function MuteButton({
+  muted,
+  onClick,
+}: {
+  muted: boolean
+  onClick: (e: React.MouseEvent) => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`shrink-0 p-0.5 rounded transition-colors hover:bg-muted/60 ${
+        muted ? "text-red-500" : "text-gray-400"
+      }`}
+      title={muted ? "Unmute" : "Mute"}
+      aria-label={muted ? "Unmute this step" : "Mute this step"}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="12"
+        height="12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+        <line x1="23" y1="9" x2="17" y2="15" />
+        <line x1="17" y1="9" x2="23" y2="15" />
+      </svg>
+    </button>
+  )
 }
 
 // ── Step card ─────────────────────────────────────────────────────────────────
@@ -200,21 +259,41 @@ function StepCard({
   step,
   rank,
   stepId,
+  isMuted,
+  isSelected,
+  onToggleMute,
+  onSelect,
 }: {
   step: WorkflowStep
   rank: number
   stepId?: string
+  isMuted?: boolean
+  isSelected?: boolean
+  onToggleMute?: (e: React.MouseEvent) => void
+  onSelect?: () => void
 }) {
   return (
     <div
       data-step-id={stepId}
+      onClick={onSelect}
       className="rounded-lg border bg-card p-3 shadow-sm select-none"
+      style={
+        isSelected
+          ? {
+              boxShadow:
+                "0 0 0 2px #60a5fa, 0 0 14px 4px rgba(96,165,250,0.35)",
+            }
+          : undefined
+      }
     >
       <div className="flex items-start gap-2 mb-1">
         <span className="shrink-0 flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold mt-0.5">
           {rank}
         </span>
-        <span className="text-sm font-medium leading-tight">{step.display_name}</span>
+        <span className="text-sm font-medium leading-tight flex-1">{step.display_name}</span>
+        {onToggleMute && (
+          <MuteButton muted={!!isMuted} onClick={onToggleMute} />
+        )}
       </div>
       <p className="text-[11px] text-muted-foreground font-mono truncate pl-7 mb-2">
         {step.name}
@@ -246,7 +325,21 @@ function StepCard({
 
 // ── Draggable wrapper ─────────────────────────────────────────────────────────
 
-function DraggableStep({ step, rank }: { step: WorkflowStep; rank: number }) {
+function DraggableStep({
+  step,
+  rank,
+  isMuted,
+  isSelected,
+  onToggleMute,
+  onSelect,
+}: {
+  step: WorkflowStep
+  rank: number
+  isMuted: boolean
+  isSelected: boolean
+  onToggleMute: (e: React.MouseEvent) => void
+  onSelect: () => void
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: step.id })
   return (
     <div
@@ -256,7 +349,15 @@ function DraggableStep({ step, rank }: { step: WorkflowStep; rank: number }) {
       {...attributes}
       {...listeners}
     >
-      <StepCard step={step} rank={rank} stepId={step.id} />
+      <StepCard
+        step={step}
+        rank={rank}
+        stepId={step.id}
+        isMuted={isMuted}
+        isSelected={isSelected}
+        onToggleMute={onToggleMute}
+        onSelect={onSelect}
+      />
     </div>
   )
 }
@@ -268,11 +369,19 @@ function GridCell({
   col,
   step,
   rank,
+  isMuted,
+  isSelected,
+  onToggleMute,
+  onSelect,
 }: {
   row: number
   col: number
   step?: WorkflowStep
   rank?: number
+  isMuted?: boolean
+  isSelected?: boolean
+  onToggleMute?: (e: React.MouseEvent) => void
+  onSelect?: () => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `cell-${row}-${col}` })
   const occupied = !!step
@@ -290,15 +399,31 @@ function GridCell({
           : "border border-dashed border-border/30"
       }`}
     >
-      {step && rank !== undefined && <DraggableStep step={step} rank={rank} />}
+      {step && rank !== undefined && onToggleMute && onSelect && (
+        <DraggableStep
+          step={step}
+          rank={rank}
+          isMuted={!!isMuted}
+          isSelected={!!isSelected}
+          onToggleMute={onToggleMute}
+          onSelect={onSelect}
+        />
+      )}
     </div>
   )
 }
 
 // ── SVG arrow overlay ─────────────────────────────────────────────────────────
 
-function WorkflowArrows({ paths }: { paths: ArrowPath[] }) {
+function WorkflowArrows({
+  paths,
+  selectedStepId,
+}: {
+  paths: ArrowPath[]
+  selectedStepId: string | null
+}) {
   if (paths.length === 0) return null
+
   return (
     <svg
       style={{
@@ -323,33 +448,66 @@ function WorkflowArrows({ paths }: { paths: ArrowPath[] }) {
         >
           <path d="M0,0 L8,3 L0,6 Z" fill="#9ca3af" />
         </marker>
+        <marker
+          id="wf-arrowhead-in"
+          markerWidth="8"
+          markerHeight="6"
+          refX="7"
+          refY="3"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M0,0 L8,3 L0,6 Z" fill="#3b82f6" />
+        </marker>
+        <marker
+          id="wf-arrowhead-out"
+          markerWidth="8"
+          markerHeight="6"
+          refX="7"
+          refY="3"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M0,0 L8,3 L0,6 Z" fill="#ef4444" />
+        </marker>
       </defs>
-      {paths.map((p) => (
-        <g key={p.id}>
-          <path
-            d={p.d}
-            stroke="#9ca3af"
-            strokeWidth={1.5}
-            fill="none"
-            markerEnd="url(#wf-arrowhead)"
-          />
-          {/* White knockout behind label text */}
-          <text
-            x={p.labelX}
-            y={p.labelY}
-            fontSize={9}
-            textAnchor="middle"
-            dominantBaseline="auto"
-            stroke="white"
-            strokeWidth={4}
-            strokeLinejoin="round"
-            paintOrder="stroke"
-            fill="#6b7280"
-          >
-            {p.label}
-          </text>
-        </g>
-      ))}
+      {paths.map((p) => {
+        const isIncoming = selectedStepId !== null && p.targetStepId === selectedStepId
+        const isOutgoing = selectedStepId !== null && p.sourceStepId === selectedStepId
+        const stroke = isIncoming ? "#3b82f6" : isOutgoing ? "#ef4444" : "#9ca3af"
+        const strokeWidth = isIncoming || isOutgoing ? 2.5 : 1.5
+        const marker = isIncoming
+          ? "url(#wf-arrowhead-in)"
+          : isOutgoing
+          ? "url(#wf-arrowhead-out)"
+          : "url(#wf-arrowhead)"
+
+        return (
+          <g key={p.id}>
+            <path
+              d={p.d}
+              stroke={stroke}
+              strokeWidth={strokeWidth}
+              fill="none"
+              markerEnd={marker}
+            />
+            <text
+              x={p.labelX}
+              y={p.labelY}
+              fontSize={9}
+              textAnchor="middle"
+              dominantBaseline="auto"
+              stroke="white"
+              strokeWidth={4}
+              strokeLinejoin="round"
+              paintOrder="stroke"
+              fill="#6b7280"
+            >
+              {p.label}
+            </text>
+          </g>
+        )
+      })}
     </svg>
   )
 }
@@ -385,9 +543,13 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
     loadLayout(workflow.id, workflow.steps)
   )
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null)
+  const [mutedSteps, setMutedSteps] = useState<Set<string>>(() =>
+    loadMutedSteps(workflow.id)
+  )
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const arrowPaths = useArrowPaths(workflow, layout, containerRef)
+  const arrowPaths = useArrowPaths(workflow, layout, containerRef, mutedSteps)
 
   const stepsById = Object.fromEntries(workflow.steps.map((s) => [s.id, s]))
   const ranks = Object.fromEntries(
@@ -399,6 +561,10 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
   useEffect(() => {
     saveLayout(workflow.id, layout)
   }, [workflow.id, layout])
+
+  useEffect(() => {
+    saveMutedSteps(workflow.id, mutedSteps)
+  }, [workflow.id, mutedSteps])
 
   const cellToStep = Object.fromEntries(
     Object.entries(layout).map(([id, pos]) => [`${pos.row},${pos.col}`, id])
@@ -429,7 +595,23 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
 
   function handleReset() {
     localStorage.removeItem(`workflow-grid-${workflow.id}`)
+    localStorage.removeItem(`workflow-muted-${workflow.id}`)
     setLayout(initLayout(workflow.steps))
+    setMutedSteps(new Set())
+  }
+
+  function handleSelect(stepId: string) {
+    setSelectedStepId((prev) => (prev === stepId ? null : stepId))
+  }
+
+  function handleToggleMute(stepId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    setMutedSteps((prev) => {
+      const next = new Set(prev)
+      if (next.has(stepId)) next.delete(stepId)
+      else next.add(stepId)
+      return next
+    })
   }
 
   const activeStep = activeId ? stepsById[activeId] : null
@@ -475,6 +657,10 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
                     col={col}
                     step={step}
                     rank={step ? ranks[step.id] : undefined}
+                    isMuted={step ? mutedSteps.has(step.id) : false}
+                    isSelected={step ? selectedStepId === step.id : false}
+                    onToggleMute={step ? (e) => handleToggleMute(step.id, e) : undefined}
+                    onSelect={step ? () => handleSelect(step.id) : undefined}
                   />
                 )
               })
@@ -490,7 +676,7 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
           </DragOverlay>
         </DndContext>
 
-        <WorkflowArrows paths={arrowPaths} />
+        <WorkflowArrows paths={arrowPaths} selectedStepId={selectedStepId} />
       </div>
     </>
   )
