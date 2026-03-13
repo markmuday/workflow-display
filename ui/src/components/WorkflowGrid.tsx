@@ -3,7 +3,6 @@ import {
   DndContext,
   DragOverlay,
   pointerWithin,
-  KeyboardSensor,
   PointerSensor,
   useDroppable,
   useDraggable,
@@ -12,7 +11,6 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core"
-import { sortableKeyboardCoordinates } from "@dnd-kit/sortable"
 import { Button } from "@/components/ui/button"
 import type { WorkflowDetail, WorkflowStep } from "@/types/workflow"
 
@@ -26,6 +24,7 @@ const EXTRA_ROWS = 4
 
 type Position = { row: number; col: number }
 type LayoutState = Record<string, Position>
+type NoteOffset = { x: number; y: number }
 
 function initLayout(steps: WorkflowStep[]): LayoutState {
   const sorted = [...steps].sort((a, b) => a.ordinal - b.ordinal)
@@ -68,6 +67,36 @@ function loadMutedSteps(workflowId: string): Set<string> {
 
 function saveMutedSteps(workflowId: string, muted: Set<string>) {
   localStorage.setItem(`workflow-muted-${workflowId}`, JSON.stringify([...muted]))
+}
+
+// ── Notes persistence ─────────────────────────────────────────────────────────
+
+function loadNotes(workflowId: string): Record<string, string> {
+  try {
+    const saved = localStorage.getItem(`workflow-notes-${workflowId}`)
+    if (saved) return JSON.parse(saved) as Record<string, string>
+  } catch {
+    // ignore
+  }
+  return {}
+}
+
+function saveNotes(workflowId: string, notes: Record<string, string>) {
+  localStorage.setItem(`workflow-notes-${workflowId}`, JSON.stringify(notes))
+}
+
+function loadNoteOffsets(workflowId: string): Record<string, NoteOffset> {
+  try {
+    const saved = localStorage.getItem(`workflow-note-positions-${workflowId}`)
+    if (saved) return JSON.parse(saved) as Record<string, NoteOffset>
+  } catch {
+    // ignore
+  }
+  return {}
+}
+
+function saveNoteOffsets(workflowId: string, positions: Record<string, NoteOffset>) {
+  localStorage.setItem(`workflow-note-positions-${workflowId}`, JSON.stringify(positions))
 }
 
 // ── Arrow computation ─────────────────────────────────────────────────────────
@@ -133,7 +162,6 @@ function useArrowPaths(
             const tgtB = cardBounds(tgt.id)
             if (!tgtB) continue
 
-            // Measure option row for Y start position
             const optEl = container!.querySelector(`[data-option-id="${opt.id}"]`)
             if (!optEl) continue
             const optR = optEl.getBoundingClientRect()
@@ -145,24 +173,19 @@ function useArrowPaths(
             let sx: number, sy: number, ex: number, ey: number
 
             if (dc > 0) {
-              // target is to the right
               sx = src.right; sy = optMidY
               ex = tgtB.left; ey = tgtB.midY
             } else if (dc < 0) {
-              // target is to the left
               sx = src.left; sy = optMidY
               ex = tgtB.right; ey = tgtB.midY
             } else if (dr > 0) {
-              // same column, target below
               sx = src.midX; sy = src.bottom
               ex = tgtB.midX; ey = tgtB.top
             } else {
-              // same column, target above
               sx = src.midX; sy = src.top
               ex = tgtB.midX; ey = tgtB.bottom
             }
 
-            // Cubic bezier control points
             let cpx1: number, cpy1: number, cpx2: number, cpy2: number
             if (dc !== 0) {
               const bend = Math.max(Math.abs(ex - sx) * 0.45, 60)
@@ -176,7 +199,6 @@ function useArrowPaths(
 
             const d = `M ${sx} ${sy} C ${cpx1} ${cpy1}, ${cpx2} ${cpy2}, ${ex} ${ey}`
 
-            // Midpoint on cubic bezier (t=0.5)
             const t = 0.5
             const lx =
               (1 - t) ** 3 * sx +
@@ -217,7 +239,9 @@ function useArrowPaths(
   return paths
 }
 
-// ── Mute icon ─────────────────────────────────────────────────────────────────
+const DEFAULT_NOTE_OFFSET: NoteOffset = { x: 6, y: 80 }
+
+// ── Mute button ───────────────────────────────────────────────────────────────
 
 function MuteButton({
   muted,
@@ -253,6 +277,179 @@ function MuteButton({
   )
 }
 
+// ── Pencil button ─────────────────────────────────────────────────────────────
+
+function PencilButton({
+  hasNote,
+  onClick,
+}: {
+  hasNote: boolean
+  onClick: (e: React.MouseEvent) => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`shrink-0 p-0.5 rounded transition-colors hover:bg-muted/60 ${
+        hasNote ? "text-amber-500" : "text-gray-400"
+      }`}
+      title={hasNote ? "Edit note" : "Add note"}
+      aria-label={hasNote ? "Edit note" : "Add note"}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="12"
+        height="12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+      </svg>
+    </button>
+  )
+}
+
+// ── Post-it note ──────────────────────────────────────────────────────────────
+
+function PostIt({
+  stepId,
+  content,
+  offset,
+  isEditing,
+  onContentChange,
+  onStartEdit,
+  onBlur,
+  onDelete,
+}: {
+  stepId: string
+  content: string
+  offset: NoteOffset
+  isEditing: boolean
+  onContentChange: (text: string) => void
+  onStartEdit: () => void
+  onBlur: () => void
+  onDelete: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `note-${stepId}`,
+    data: { type: "note", stepId },
+    disabled: isEditing,
+  })
+
+  // Extract onPointerDown from listeners to merge with stopPropagation
+  const dndPointerDown = (
+    listeners as Record<string, (e: React.PointerEvent) => void> | undefined
+  )?.onPointerDown
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      data-postit-step-id={stepId}
+      style={{
+        position: "absolute",
+        left: offset.x,
+        top: offset.y,
+        width: 160,
+        transform: isDragging
+          ? `translate(${transform?.x ?? 0}px, ${transform?.y ?? 0}px) rotate(2deg)`
+          : "rotate(1.5deg)",
+        background: "#fef9c3",
+        borderRadius: 3,
+        padding: "5px 7px 8px",
+        boxShadow: isDragging
+          ? "3px 6px 14px rgba(0,0,0,0.22)"
+          : "1px 2px 5px rgba(0,0,0,0.14)",
+        fontSize: 11,
+        minHeight: 52,
+        cursor: isEditing ? "default" : isDragging ? "grabbing" : "grab",
+        userSelect: isEditing ? "text" : "none",
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        if (!isEditing) dndPointerDown?.(e)
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 3,
+        }}
+      >
+        <span style={{ fontSize: 9, color: "#92400e", opacity: 0.5, letterSpacing: "0.02em" }}>
+          drag to reposition
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "#92400e",
+            opacity: 0.45,
+            fontSize: 13,
+            lineHeight: 1,
+            padding: "0 1px",
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      {isEditing ? (
+        <textarea
+          autoFocus
+          value={content}
+          onChange={(e) => onContentChange(e.target.value)}
+          onBlur={onBlur}
+          onPointerDown={(e) => e.stopPropagation()}
+          placeholder="Write a note…"
+          rows={3}
+          style={{
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            resize: "none",
+            width: "100%",
+            fontFamily: "inherit",
+            fontSize: "inherit",
+            color: "#451a03",
+            lineHeight: 1.5,
+          }}
+        />
+      ) : (
+        <div
+          onClick={(e) => {
+            e.stopPropagation()
+            onStartEdit()
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            whiteSpace: "pre-wrap",
+            color: content ? "#451a03" : "#a16207",
+            fontStyle: content ? "normal" : "italic",
+            minHeight: 28,
+            cursor: "text",
+            lineHeight: 1.5,
+          }}
+        >
+          {content || "Click to add note…"}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Step card ─────────────────────────────────────────────────────────────────
 
 function StepCard({
@@ -261,16 +458,20 @@ function StepCard({
   stepId,
   isMuted,
   isSelected,
+  hasNote,
   onToggleMute,
   onSelect,
+  onOpenNote,
 }: {
   step: WorkflowStep
   rank: number
   stepId?: string
   isMuted?: boolean
   isSelected?: boolean
+  hasNote?: boolean
   onToggleMute?: (e: React.MouseEvent) => void
   onSelect?: () => void
+  onOpenNote?: (e: React.MouseEvent) => void
 }) {
   return (
     <div
@@ -279,10 +480,7 @@ function StepCard({
       className="rounded-lg border bg-card p-3 shadow-sm select-none"
       style={
         isSelected
-          ? {
-              boxShadow:
-                "0 0 0 2px #60a5fa, 0 0 14px 4px rgba(96,165,250,0.35)",
-            }
+          ? { boxShadow: "0 0 0 2px #60a5fa, 0 0 14px 4px rgba(96,165,250,0.35)" }
           : undefined
       }
     >
@@ -291,6 +489,9 @@ function StepCard({
           {rank}
         </span>
         <span className="text-sm font-medium leading-tight flex-1">{step.display_name}</span>
+        {onOpenNote && (
+          <PencilButton hasNote={!!hasNote} onClick={onOpenNote} />
+        )}
         {onToggleMute && (
           <MuteButton muted={!!isMuted} onClick={onToggleMute} />
         )}
@@ -332,6 +533,14 @@ function DraggableStep({
   isSelected,
   onToggleMute,
   onSelect,
+  note,
+  noteOffset,
+  isEditingNote,
+  onNoteContentChange,
+  onStartEditNote,
+  onStopEditNote,
+  onDeleteNote,
+  onOpenNote,
 }: {
   step: WorkflowStep
   rank: number
@@ -339,25 +548,57 @@ function DraggableStep({
   isSelected: boolean
   onToggleMute: (e: React.MouseEvent) => void
   onSelect: () => void
+  note: string | undefined
+  noteOffset: NoteOffset
+  isEditingNote: boolean
+  onNoteContentChange: (text: string) => void
+  onStartEditNote: () => void
+  onStopEditNote: () => void
+  onDeleteNote: () => void
+  onOpenNote: (e: React.MouseEvent) => void
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: step.id })
+
+  const hasNote = note !== undefined
+
+  const postItEl = hasNote ? (
+    <PostIt
+      stepId={step.id}
+      content={note}
+      offset={noteOffset}
+      isEditing={isEditingNote}
+      onContentChange={onNoteContentChange}
+      onStartEdit={onStartEditNote}
+      onBlur={onStopEditNote}
+      onDelete={onDeleteNote}
+    />
+  ) : null
+
   return (
     <div
       ref={setNodeRef}
       className="cursor-grab active:cursor-grabbing"
-      style={{ opacity: isDragging ? 0 : 1 }}
+      style={{ opacity: isDragging ? 0 : 1, position: "relative" }}
       {...attributes}
       {...listeners}
     >
-      <StepCard
-        step={step}
-        rank={rank}
-        stepId={step.id}
-        isMuted={isMuted}
-        isSelected={isSelected}
-        onToggleMute={onToggleMute}
-        onSelect={onSelect}
-      />
+      {/* Post-it always rendered BEFORE card so card naturally paints on top */}
+      {postItEl}
+
+      {/* Card wrapped in positioned div so DOM-order stacking works correctly */}
+      <div style={{ position: "relative" }}>
+        <StepCard
+          step={step}
+          rank={rank}
+          stepId={step.id}
+          isMuted={isMuted}
+          isSelected={isSelected}
+          hasNote={hasNote}
+          onToggleMute={onToggleMute}
+          onSelect={onSelect}
+          onOpenNote={onOpenNote}
+        />
+      </div>
     </div>
   )
 }
@@ -373,6 +614,14 @@ function GridCell({
   isSelected,
   onToggleMute,
   onSelect,
+  note,
+  noteOffset,
+  isEditingNote,
+  onNoteContentChange,
+  onStartEditNote,
+  onStopEditNote,
+  onDeleteNote,
+  onOpenNote,
 }: {
   row: number
   col: number
@@ -382,6 +631,14 @@ function GridCell({
   isSelected?: boolean
   onToggleMute?: (e: React.MouseEvent) => void
   onSelect?: () => void
+  note?: string
+  noteOffset?: NoteOffset
+  isEditingNote?: boolean
+  onNoteContentChange?: (text: string) => void
+  onStartEditNote?: () => void
+  onStopEditNote?: () => void
+  onDeleteNote?: () => void
+  onOpenNote?: (e: React.MouseEvent) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `cell-${row}-${col}` })
   const occupied = !!step
@@ -399,16 +656,32 @@ function GridCell({
           : "border border-dashed border-border/30"
       }`}
     >
-      {step && rank !== undefined && onToggleMute && onSelect && (
-        <DraggableStep
-          step={step}
-          rank={rank}
-          isMuted={!!isMuted}
-          isSelected={!!isSelected}
-          onToggleMute={onToggleMute}
-          onSelect={onSelect}
-        />
-      )}
+      {step &&
+        rank !== undefined &&
+        onToggleMute &&
+        onSelect &&
+        onNoteContentChange &&
+        onStartEditNote &&
+        onStopEditNote &&
+        onDeleteNote &&
+        onOpenNote && (
+          <DraggableStep
+            step={step}
+            rank={rank}
+            isMuted={!!isMuted}
+            isSelected={!!isSelected}
+            onToggleMute={onToggleMute}
+            onSelect={onSelect}
+            note={note}
+            noteOffset={noteOffset ?? DEFAULT_NOTE_OFFSET}
+            isEditingNote={!!isEditingNote}
+            onNoteContentChange={onNoteContentChange}
+            onStartEditNote={onStartEditNote}
+            onStopEditNote={onStopEditNote}
+            onDeleteNote={onDeleteNote}
+            onOpenNote={onOpenNote}
+          />
+        )}
     </div>
   )
 }
@@ -547,6 +820,14 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
   const [mutedSteps, setMutedSteps] = useState<Set<string>>(() =>
     loadMutedSteps(workflow.id)
   )
+  const [notes, setNotes] = useState<Record<string, string>>(() =>
+    loadNotes(workflow.id)
+  )
+  const [noteOffsets, setNoteOffsets] = useState<Record<string, NoteOffset>>(() =>
+    loadNoteOffsets(workflow.id)
+  )
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+
   const containerRef = useRef<HTMLDivElement>(null)
 
   const arrowPaths = useArrowPaths(workflow, layout, containerRef, mutedSteps)
@@ -558,13 +839,10 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
       .map((s, i) => [s.id, i + 1])
   )
 
-  useEffect(() => {
-    saveLayout(workflow.id, layout)
-  }, [workflow.id, layout])
-
-  useEffect(() => {
-    saveMutedSteps(workflow.id, mutedSteps)
-  }, [workflow.id, mutedSteps])
+  useEffect(() => { saveLayout(workflow.id, layout) }, [workflow.id, layout])
+  useEffect(() => { saveMutedSteps(workflow.id, mutedSteps) }, [workflow.id, mutedSteps])
+  useEffect(() => { saveNotes(workflow.id, notes) }, [workflow.id, notes])
+  useEffect(() => { saveNoteOffsets(workflow.id, noteOffsets) }, [workflow.id, noteOffsets])
 
   const cellToStep = Object.fromEntries(
     Object.entries(layout).map(([id, pos]) => [`${pos.row},${pos.col}`, id])
@@ -573,15 +851,54 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
   const totalRows = maxRow + 1 + EXTRA_ROWS
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
 
   function handleDragStart({ active }: DragStartEvent) {
-    setActiveId(active.id as string)
+    if (!String(active.id).startsWith("note-")) {
+      setActiveId(active.id as string)
+    }
   }
 
-  function handleDragEnd({ active, over }: DragEndEvent) {
+  function handleDragEnd({ active, over, delta }: DragEndEvent) {
+    // Note drag — accumulate x/y offset, clamp so center stays outside the card
+    if (String(active.id).startsWith("note-")) {
+      const stepId = String(active.id).slice(5)
+      setNoteOffsets((prev) => {
+        const cur = prev[stepId] ?? DEFAULT_NOTE_OFFSET
+        let nx = cur.x + delta.x
+        let ny = cur.y + delta.y
+
+        // Measure card and note to enforce visibility constraint
+        const cardEl = containerRef.current?.querySelector(`[data-step-id="${stepId}"]`)
+        const noteEl = containerRef.current?.querySelector(`[data-postit-step-id="${stepId}"]`)
+        if (cardEl && noteEl) {
+          const cw = (cardEl as HTMLElement).offsetWidth
+          const ch = (cardEl as HTMLElement).offsetHeight
+          const nw = (noteEl as HTMLElement).offsetWidth
+          const nh = (noteEl as HTMLElement).offsetHeight
+          const cx = nx + nw / 2
+          const cy = ny + nh / 2
+          // If note center is inside the card, push it out to the nearest edge
+          if (cx >= 0 && cx <= cw && cy >= 0 && cy <= ch) {
+            const dLeft   = cx
+            const dRight  = cw - cx
+            const dTop    = cy
+            const dBottom = ch - cy
+            const min = Math.min(dLeft, dRight, dTop, dBottom)
+            if      (min === dLeft)   nx = -nw / 2
+            else if (min === dRight)  nx = cw - nw / 2
+            else if (min === dTop)    ny = -nh / 2
+            else                      ny = ch - nh / 2
+          }
+        }
+
+        return { ...prev, [stepId]: { x: nx, y: ny } }
+      })
+      return
+    }
+
+    // Card drag
     setActiveId(null)
     if (!over) return
     const match = String(over.id).match(/^cell-(\d+)-(\d+)$/)
@@ -593,11 +910,35 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
     setLayout((prev) => ({ ...prev, [active.id as string]: { row, col } }))
   }
 
+  function handleExport() {
+    const state = {
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      exportedAt: new Date().toISOString(),
+      layout,
+      mutedSteps: [...mutedSteps],
+      notes,
+      noteOffsets,
+    }
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${workflow.name}-display.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   function handleReset() {
     localStorage.removeItem(`workflow-grid-${workflow.id}`)
     localStorage.removeItem(`workflow-muted-${workflow.id}`)
+    localStorage.removeItem(`workflow-notes-${workflow.id}`)
+    localStorage.removeItem(`workflow-note-positions-${workflow.id}`)
     setLayout(initLayout(workflow.steps))
     setMutedSteps(new Set())
+    setNotes({})
+    setNoteOffsets({})
+    setEditingNoteId(null)
   }
 
   function handleSelect(stepId: string) {
@@ -614,11 +955,50 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
     })
   }
 
+  function handleOpenNote(stepId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (notes[stepId] === undefined) {
+      setNotes((prev) => ({ ...prev, [stepId]: "" }))
+      setNoteOffsets((prev) => ({ ...prev, [stepId]: DEFAULT_NOTE_OFFSET }))
+    }
+    setEditingNoteId(stepId)
+  }
+
+  function handleNoteContentChange(stepId: string, text: string) {
+    setNotes((prev) => ({ ...prev, [stepId]: text }))
+  }
+
+  function handleStopEditNote() {
+    setEditingNoteId(null)
+  }
+
+  function handleDeleteNote(stepId: string) {
+    setNotes((prev) => {
+      const next = { ...prev }
+      delete next[stepId]
+      return next
+    })
+    setNoteOffsets((prev) => {
+      const next = { ...prev }
+      delete next[stepId]
+      return next
+    })
+    if (editingNoteId === stepId) setEditingNoteId(null)
+  }
+
   const activeStep = activeId ? stepsById[activeId] : null
 
   return (
     <>
-      <div className="flex justify-end mb-2">
+      <div className="flex justify-end gap-2 mb-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          onClick={handleExport}
+        >
+          Export
+        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -661,6 +1041,16 @@ export function WorkflowGrid({ workflow }: { workflow: WorkflowDetail }) {
                     isSelected={step ? selectedStepId === step.id : false}
                     onToggleMute={step ? (e) => handleToggleMute(step.id, e) : undefined}
                     onSelect={step ? () => handleSelect(step.id) : undefined}
+                    note={step ? notes[step.id] : undefined}
+                    noteOffset={step ? (noteOffsets[step.id] ?? DEFAULT_NOTE_OFFSET) : undefined}
+                    isEditingNote={step ? editingNoteId === step.id : false}
+                    onNoteContentChange={
+                      step ? (text) => handleNoteContentChange(step.id, text) : undefined
+                    }
+                    onStartEditNote={step ? () => setEditingNoteId(step.id) : undefined}
+                    onStopEditNote={handleStopEditNote}
+                    onDeleteNote={step ? () => handleDeleteNote(step.id) : undefined}
+                    onOpenNote={step ? (e) => handleOpenNote(step.id, e) : undefined}
                   />
                 )
               })

@@ -389,6 +389,43 @@ CREATE TABLE invoice_line_item (
     FOREIGN KEY (matter_id) REFERENCES matter(matter_id)
 );
 
+CREATE TABLE invoice_line_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    invoice_id uuid,
+    stripe_product_id text,
+    stripe_price_id text,
+    description text,
+    matter_id integer,
+    quantity integer,
+    unit_price numeric,
+    is_deleted boolean,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    stripe_invoice_id text,
+    profile_id text,
+    first_name text,
+    last_name text,
+    email text,
+    legal_cost numeric,
+    filing_fees numeric,
+    bci_cert_fees numeric,
+    bci_app_fees numeric,
+    convictions integer,
+    PRIMARY KEY (id),
+    FOREIGN KEY (invoice_id) REFERENCES invoice(id),
+    FOREIGN KEY (matter_id) REFERENCES matter(id)
+);
+
+CREATE TABLE invoice_line_items_doc_edit_temp (
+    id uuid,
+    client_profile_id text,
+    expungement_count text,
+    expungement_conv_count text,
+    edits jsonb,
+    updated_at timestamp without time zone,
+    email text
+);
+
 CREATE TABLE legal_decision (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     profile_id text,
@@ -436,6 +473,26 @@ CREATE TABLE line_item_type (
     fee_type text,
     default_stripe_price_id text,
     PRIMARY KEY (id)
+);
+
+CREATE TABLE manual_request (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text,
+    request_number text,
+    requested_by text,
+    profile_id text,
+    triaged_at timestamp with time zone,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    assigned_to text,
+    description text,
+    slack_link text,
+    triaged_by text,
+    supplemental_data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    PRIMARY KEY (id),
+    FOREIGN KEY (profile_id) REFERENCES person(profile_id)
 );
 
 CREATE TABLE matter (
@@ -984,6 +1041,7 @@ CREATE TABLE workflow_action (
     property_to_check text,
     workflow_name text,
     required_workflow_step text,
+    matter_column_name text,
     PRIMARY KEY (id)
 );
 
@@ -1013,6 +1071,7 @@ CREATE TABLE workflow_option (
     workflow_step_name text,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    workflow_name text,
     PRIMARY KEY (id)
 );
 
