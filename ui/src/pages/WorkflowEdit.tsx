@@ -1,10 +1,28 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { PlusIcon, XIcon, Trash2Icon } from "lucide-react"
+import { PlusIcon, XIcon, Trash2Icon, GripVerticalIcon, ListCollapseIcon } from "lucide-react"
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
 import type { WorkflowDetail, WorkflowStep, WorkflowAction } from "@/types/workflow"
 
 // ── Edit state ────────────────────────────────────────────────────────────────
@@ -31,6 +49,9 @@ interface NewActionDef {
   name: string
   description: string
   nextWorkflowStepName: string
+  propertyName: string
+  deadlinePropertyName: string
+  deadlineOffsetDays: string
 }
 
 interface NewActionLink {
@@ -48,6 +69,8 @@ interface EditState {
   newOptions: NewOption[]
   newActionDefs: NewActionDef[]
   newActionLinks: NewActionLink[]
+  // Ordered list of step keys (existing step id or new step clientId). Empty = default order.
+  stepOrder: string[]
 }
 
 function emptyEditState(): EditState {
@@ -58,6 +81,7 @@ function emptyEditState(): EditState {
     newOptions: [],
     newActionDefs: [],
     newActionLinks: [],
+    stepOrder: [],
   }
 }
 
@@ -91,23 +115,37 @@ function slugify(s: string) {
 function AddActionForm({
   allActions,
   steps,
+  workflowState,
   onAdd,
   onCancel,
 }: {
   allActions: WorkflowAction[]
   steps: WorkflowStep[]
+  workflowState: string
   onAdd: (
     params:
       | { mode: "existing"; action: WorkflowAction }
-      | { mode: "new"; name: string; description: string; nextStep: string }
+      | {
+          mode: "new"
+          name: string
+          description: string
+          nextStep: string
+          propertyName: string
+          deadlinePropertyName: string
+          deadlineOffsetDays: string
+        }
   ) => void
   onCancel: () => void
 }) {
   const [mode, setMode] = useState<"existing" | "new">("existing")
   const [selectedId, setSelectedId] = useState("")
-  const [newName, setNewName] = useState("")
+  const [newName, setNewName] = useState(`${workflowState.toUpperCase()}_ACTION_`)
   const [newDesc, setNewDesc] = useState("")
   const [nextStep, setNextStep] = useState("")
+  const [propertyName, setPropertyName] = useState("")
+  const [hasDeadline, setHasDeadline] = useState(false)
+  const [deadlinePropertyName, setDeadlinePropertyName] = useState("")
+  const [deadlineOffsetDays, setDeadlineOffsetDays] = useState("")
 
   function handleAdd() {
     if (mode === "existing") {
@@ -116,7 +154,15 @@ function AddActionForm({
       onAdd({ mode: "existing", action })
     } else {
       if (!newName.trim()) return
-      onAdd({ mode: "new", name: newName.trim(), description: newDesc.trim(), nextStep })
+      onAdd({
+        mode: "new",
+        name: newName.trim(),
+        description: newDesc.trim(),
+        nextStep,
+        propertyName: propertyName.trim(),
+        deadlinePropertyName: deadlinePropertyName.trim(),
+        deadlineOffsetDays: deadlineOffsetDays.trim(),
+      })
     }
   }
 
@@ -178,6 +224,38 @@ function AddActionForm({
               </option>
             ))}
           </select>
+          <Input
+            placeholder="Property name — what property gets set in state_specific_data JSON"
+            value={propertyName}
+            onChange={(e) => setPropertyName(e.target.value)}
+            className="text-xs h-7 font-mono"
+          />
+          <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hasDeadline}
+              onChange={(e) => setHasDeadline(e.target.checked)}
+              className="rounded"
+            />
+            Deadline
+          </label>
+          {hasDeadline && (
+            <div className="pl-4 space-y-1.5 border-l-2 border-muted">
+              <Input
+                placeholder="Deadline property name — what property name is for deadline date"
+                value={deadlinePropertyName}
+                onChange={(e) => setDeadlinePropertyName(e.target.value)}
+                className="text-xs h-7 font-mono"
+              />
+              <Input
+                placeholder="Deadline offset days — how many days to move out the deadline"
+                value={deadlineOffsetDays}
+                onChange={(e) => setDeadlineOffsetDays(e.target.value)}
+                className="text-xs h-7"
+                type="number"
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -315,6 +393,7 @@ function OptionEditRow({
   option,
   allActions,
   steps,
+  workflowState,
   onRemove,
   onRemoveAction,
   onAddAction,
@@ -322,12 +401,21 @@ function OptionEditRow({
   option: OptionDisplay
   allActions: WorkflowAction[]
   steps: WorkflowStep[]
+  workflowState: string
   onRemove: () => void
   onRemoveAction: (actionId: string | null, actionClientId: string | null) => void
   onAddAction: (
     params:
       | { mode: "existing"; action: WorkflowAction }
-      | { mode: "new"; name: string; description: string; nextStep: string }
+      | {
+          mode: "new"
+          name: string
+          description: string
+          nextStep: string
+          propertyName: string
+          deadlinePropertyName: string
+          deadlineOffsetDays: string
+        }
   ) => void
 }) {
   const [showAddAction, setShowAddAction] = useState(false)
@@ -370,6 +458,7 @@ function OptionEditRow({
         <AddActionForm
           allActions={allActions}
           steps={steps}
+          workflowState={workflowState}
           onAdd={(params) => {
             onAddAction(params)
             setShowAddAction(false)
@@ -392,22 +481,28 @@ function OptionEditRow({
 // ── Step edit card ────────────────────────────────────────────────────────────
 
 function StepEditCard({
+  dragKey,
   step,
   rank,
+  rollup,
   visibleOptions,
   allActions,
   allSteps,
+  workflowState,
   onRemoveOption,
   onAddOption,
   onRemoveAction,
   onAddAction,
   onRemoveStep,
 }: {
+  dragKey: string
   step: StepCardInfo
   rank: number
+  rollup?: boolean
   visibleOptions: OptionDisplay[]
   allActions: WorkflowAction[]
   allSteps: WorkflowStep[]
+  workflowState: string
   onRemoveOption: (optionId: string | null, optionClientId: string | null) => void
   onAddOption: (name: string, displayName: string) => void
   onRemoveAction: (
@@ -421,30 +516,73 @@ function StepEditCard({
     optionClientId: string | null,
     params:
       | { mode: "existing"; action: WorkflowAction }
-      | { mode: "new"; name: string; description: string; nextStep: string }
+      | {
+          mode: "new"
+          name: string
+          description: string
+          nextStep: string
+          propertyName: string
+          deadlinePropertyName: string
+          deadlineOffsetDays: string
+        }
   ) => void
   onRemoveStep?: () => void
 }) {
   const [showAddOption, setShowAddOption] = useState(false)
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: dragKey })
+  const style = {
+    // Translate only — CSS.Transform would bake in scaleX/scaleY from the
+    // hovered item's size, distorting cards that differ in height.
+    transform: CSS.Translate.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+  }
 
   return (
-    <Card className={step.isNew ? "border-primary/30" : undefined}>
-      <CardHeader className="pb-2 pt-3 px-4">
+    <div ref={setNodeRef} style={style}>
+    <Card
+      className={cn(
+        "transition-shadow",
+        step.isNew && "border-primary/30",
+        isDragging && "opacity-60 shadow-lg ring-2 ring-primary"
+      )}
+    >
+      <CardHeader className={cn("px-4", rollup ? "py-2" : "pb-2 pt-3")}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2">
+            <button
+              type="button"
+              {...attributes}
+              {...listeners}
+              className="shrink-0 -ml-1 mt-0.5 flex items-center text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
+              title="Drag to reorder"
+            >
+              <GripVerticalIcon className="size-4" />
+            </button>
             <span className="shrink-0 flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold mt-0.5">
               {rank}
             </span>
-            <div>
-              <div className="flex items-center gap-2">
+            {rollup ? (
+              <div className="flex items-baseline gap-2 flex-wrap">
                 <p className="text-sm font-semibold leading-tight">{step.displayName}</p>
+                <p className="text-xs text-muted-foreground font-mono">{step.name}</p>
                 {step.isNew && (
                   <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">{step.name}</p>
-              <p className="text-xs text-muted-foreground">ordinal: {step.ordinal}</p>
-            </div>
+            ) : (
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold leading-tight">{step.displayName}</p>
+                  {step.isNew && (
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">{step.name}</p>
+                <p className="text-xs text-muted-foreground">ordinal: {step.ordinal}</p>
+              </div>
+            )}
           </div>
           {onRemoveStep && (
             <button
@@ -458,6 +596,7 @@ function StepEditCard({
         </div>
       </CardHeader>
 
+      {!rollup && (
       <CardContent className="px-4 pb-4 space-y-2">
         {visibleOptions.map((opt) => (
           <OptionEditRow
@@ -465,6 +604,7 @@ function StepEditCard({
             option={opt}
             allActions={allActions}
             steps={allSteps}
+            workflowState={workflowState}
             onRemove={() => onRemoveOption(opt.id, opt.clientId)}
             onRemoveAction={(actionId, actionClientId) =>
               onRemoveAction(opt.id, opt.clientId, actionId, actionClientId)
@@ -493,7 +633,9 @@ function StepEditCard({
           </Button>
         )}
       </CardContent>
+      )}
     </Card>
+    </div>
   )
 }
 
@@ -509,6 +651,11 @@ export function WorkflowEditPage() {
   const [error, setError] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>(emptyEditState)
   const [showAddStep, setShowAddStep] = useState(false)
+  const [rollup, setRollup] = useState(false)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   useEffect(() => {
     if (!id) return
@@ -537,13 +684,55 @@ export function WorkflowEditPage() {
   const allStepOrdinals = [...sortedSteps.map((s) => s.ordinal), ...editState.newSteps.map((s) => s.ordinal)]
   const maxOrdinal = Math.max(0, ...allStepOrdinals)
 
+  // ── Step ordering ──────────────────────────────────────────────────────────
+  // A "step key" is the existing step's id, or a new step's clientId.
+  // baseKeys is the default order (existing by ordinal, then new in creation order).
+  // orderedKeys applies any local reordering, appending keys not yet in stepOrder.
+  function orderKeys(state: EditState): string[] {
+    const base = [
+      ...sortedSteps.map((s) => s.id),
+      ...state.newSteps.map((s) => s.clientId),
+    ]
+    if (state.stepOrder.length === 0) return base
+    const known = new Set(state.stepOrder)
+    return [
+      ...state.stepOrder.filter((k) => base.includes(k)),
+      ...base.filter((k) => !known.has(k)),
+    ]
+  }
+
+  const baseKeys = [
+    ...sortedSteps.map((s) => s.id),
+    ...editState.newSteps.map((s) => s.clientId),
+  ]
+  const orderedKeys = orderKeys(editState)
+  // Contiguous ordinals (1..N, no holes) derived purely from position.
+  const ordinalByKey = new Map(orderedKeys.map((k, i) => [k, i + 1]))
+  const stepsReordered = orderedKeys.some((k, i) => k !== baseKeys[i])
+
+  const existingStepById = new Map(sortedSteps.map((s) => [s.id, s]))
+  const newStepByClientId = new Map(editState.newSteps.map((s) => [s.clientId, s]))
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setEditState((prev) => {
+      const keys = orderKeys(prev)
+      const from = keys.indexOf(String(active.id))
+      const to = keys.indexOf(String(over.id))
+      if (from === -1 || to === -1) return prev
+      return { ...prev, stepOrder: arrayMove(keys, from, to) }
+    })
+  }
+
   const hasChanges =
     editState.removedOptionIds.size > 0 ||
     editState.removedActionLinks.length > 0 ||
     editState.newSteps.length > 0 ||
     editState.newOptions.length > 0 ||
     editState.newActionDefs.length > 0 ||
-    editState.newActionLinks.length > 0
+    editState.newActionLinks.length > 0 ||
+    stepsReordered
 
   // ── Visible option builders ────────────────────────────────────────────────
 
@@ -705,7 +894,15 @@ export function WorkflowEditPage() {
     optionClientId: string | null,
     params:
       | { mode: "existing"; action: WorkflowAction }
-      | { mode: "new"; name: string; description: string; nextStep: string }
+      | {
+          mode: "new"
+          name: string
+          description: string
+          nextStep: string
+          propertyName: string
+          deadlinePropertyName: string
+          deadlineOffsetDays: string
+        }
   ) {
     if (params.mode === "existing") {
       setEditState((prev) => ({
@@ -732,6 +929,9 @@ export function WorkflowEditPage() {
             name: params.name,
             description: params.description,
             nextWorkflowStepName: params.nextStep,
+            propertyName: params.propertyName,
+            deadlinePropertyName: params.deadlinePropertyName,
+            deadlineOffsetDays: params.deadlineOffsetDays,
           },
         ],
         newActionLinks: [
@@ -761,8 +961,11 @@ export function WorkflowEditPage() {
       new_steps: editState.newSteps.map((s) => ({
         name: s.name,
         display_name: s.displayName,
-        ordinal: s.ordinal,
+        ordinal: ordinalByKey.get(s.clientId) ?? s.ordinal,
       })),
+      reorder_steps: sortedSteps
+        .filter((s) => (ordinalByKey.get(s.id) ?? s.ordinal) !== s.ordinal)
+        .map((s) => ({ id: s.id, ordinal: ordinalByKey.get(s.id) })),
       new_options: editState.newOptions.map((o) => ({
         client_id: o.clientId,
         step_name: o.stepName,
@@ -775,6 +978,9 @@ export function WorkflowEditPage() {
         name: a.name,
         description: a.description || null,
         next_workflow_step_name: a.nextWorkflowStepName || null,
+        property_name: a.propertyName || null,
+        deadline_property_name: a.deadlinePropertyName || null,
+        deadline_offset_days: a.deadlineOffsetDays ? parseInt(a.deadlineOffsetDays, 10) : null,
       })),
       new_action_links: editState.newActionLinks.map((l) => ({
         option_id: l.optionId,
@@ -797,8 +1003,6 @@ export function WorkflowEditPage() {
       alert("Save failed. Please try again.")
     }
   }
-
-  const existingRanks = Object.fromEntries(sortedSteps.map((s, i) => [s.id, i + 1]))
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
@@ -833,6 +1037,15 @@ export function WorkflowEditPage() {
               <span className="text-xs text-muted-foreground">Unsaved changes</span>
             )}
             <Button
+              variant={rollup ? "default" : "outline"}
+              size="sm"
+              onClick={() => setRollup((v) => !v)}
+              title="Toggle rollup mode — show only step names for easier reordering"
+            >
+              <ListCollapseIcon className="size-4 mr-1" />
+              Rollup
+            </Button>
+            <Button
               variant="outline"
               size="sm"
               onClick={() => setEditState(emptyEditState())}
@@ -847,43 +1060,66 @@ export function WorkflowEditPage() {
         </div>
       </div>
 
-      {/* Existing steps */}
+      {/* Steps (existing + new), in display order — drag the grip to reorder */}
       <div className="space-y-4">
-        {sortedSteps.map((step) => (
-          <StepEditCard
-            key={step.id}
-            step={{ name: step.name, displayName: step.display_name, ordinal: step.ordinal }}
-            rank={existingRanks[step.id]}
-            visibleOptions={getVisibleOptionsForStep(step)}
-            allActions={allActions}
-            allSteps={sortedSteps}
-            onRemoveOption={removeOption}
-            onAddOption={(name, displayName) =>
-              addOption(step.id, null, step.name, name, displayName)
-            }
-            onRemoveAction={removeAction}
-            onAddAction={addAction}
-          />
-        ))}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={orderedKeys} strategy={verticalListSortingStrategy}>
+            <div className={rollup ? "space-y-1.5" : "space-y-4"}>
+              {orderedKeys.map((key) => {
+                const rank = ordinalByKey.get(key)!
 
-        {/* New steps */}
-        {editState.newSteps.map((step, i) => (
-          <StepEditCard
-            key={step.clientId}
-            step={{ name: step.name, displayName: step.displayName, ordinal: step.ordinal, isNew: true }}
-            rank={sortedSteps.length + i + 1}
-            visibleOptions={getVisibleOptionsForNewStep(step)}
-            allActions={allActions}
-            allSteps={sortedSteps}
-            onRemoveOption={removeOption}
-            onAddOption={(name, displayName) =>
-              addOption(null, step.clientId, step.name, name, displayName)
-            }
-            onRemoveAction={removeAction}
-            onAddAction={addAction}
-            onRemoveStep={() => removeNewStep(step.clientId)}
-          />
-        ))}
+                const existing = existingStepById.get(key)
+                if (existing) {
+                  return (
+                    <StepEditCard
+                      key={key}
+                      dragKey={key}
+                      rollup={rollup}
+                      step={{ name: existing.name, displayName: existing.display_name, ordinal: rank }}
+                      rank={rank}
+                      visibleOptions={getVisibleOptionsForStep(existing)}
+                      allActions={allActions}
+                      allSteps={sortedSteps}
+                      workflowState={workflow.us_state ?? ""}
+                      onRemoveOption={removeOption}
+                      onAddOption={(name, displayName) =>
+                        addOption(existing.id, null, existing.name, name, displayName)
+                      }
+                      onRemoveAction={removeAction}
+                      onAddAction={addAction}
+                    />
+                  )
+                }
+
+                const step = newStepByClientId.get(key)!
+                return (
+                  <StepEditCard
+                    key={key}
+                    dragKey={key}
+                    rollup={rollup}
+                    step={{ name: step.name, displayName: step.displayName, ordinal: rank, isNew: true }}
+                    rank={rank}
+                    visibleOptions={getVisibleOptionsForNewStep(step)}
+                    allActions={allActions}
+                    allSteps={sortedSteps}
+                    workflowState={workflow.us_state ?? ""}
+                    onRemoveOption={removeOption}
+                    onAddOption={(name, displayName) =>
+                      addOption(null, step.clientId, step.name, name, displayName)
+                    }
+                    onRemoveAction={removeAction}
+                    onAddAction={addAction}
+                    onRemoveStep={() => removeNewStep(step.clientId)}
+                  />
+                )
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
 
         {/* Add step */}
         {showAddStep ? (

@@ -131,6 +131,13 @@ def save_workflow(id):
             (step['name'], step['display_name'], step.get('ordinal', 0), id, workflow['name'])
         )
 
+    # 0b. Reorder existing steps (renumbered to contiguous ordinals by the client)
+    for r in body.get('reorder_steps', []):
+        execute(
+            'UPDATE workflow_step SET ordinal = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s',
+            (r['ordinal'], r['id'])
+        )
+
     # 1. Remove action links from existing options
     for link in body.get('remove_action_links', []):
         execute(
