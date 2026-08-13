@@ -86,3 +86,5 @@ The database (`api/schema_ddl.sql`) represents a legal case management system. K
 - `court`, `person_case`, `person_charge` — court and case record data
 
 Foreign keys on `person` use `profile_id` (text), not the integer PK.
+
+`workflow_step.fw_name` is a legacy column (formerly "freshworks name") from deprecated functionality. It's otherwise unused, so it's been repurposed to store a `'main'` layout hint marking a step as being on the workflow's main path — used to lay main-path steps along a central line, with non-main steps off to the side.
