@@ -34,6 +34,18 @@ npm run lint      # lint
 | `/workflow/:id` | Workflow detail |
 | `/workflow/:id/edit` | Workflow editor |
 
+## Workflow editor
+
+Add, remove, and reorder steps, options, and actions. All edits are kept in local
+state and only persisted when **Save** is clicked (**Discard** resets them).
+
+- **Reorder steps** — drag the grip handle on a step card (dnd-kit; keyboard-accessible
+  via Space/arrows/Space). Ordinals are recomputed to a contiguous `1..N` sequence on
+  save, so gaps and duplicate ordinals are collapsed.
+- **Rollup mode** — toggle in the header to collapse each step to a single line (name
+  only, no options/actions), making it easier to see and rearrange many steps at once.
+  Adding a step still works in this mode.
+
 ## API Proxy
 
 The Vite dev server proxies `/api` to `http://localhost:5001`. Make sure the Flask backend is running on that port.

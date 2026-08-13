@@ -71,6 +71,12 @@ interface EditState {
   newActionLinks: NewActionLink[]
   // Ordered list of step keys (existing step id or new step clientId). Empty = default order.
   stepOrder: string[]
+  // fw_name is a legacy, otherwise-unused column (formerly "freshworks name")
+  // that we repurpose here as a "main path" layout hint: 'main' marks a step
+  // as sitting on the workflow's central/happy path, vs. off to the side.
+  // Overrides are keyed by step key (existing id or new clientId); presence
+  // of a key = an intentional change; value is 'main' or null.
+  fwNameByKey: Record<string, string | null>
 }
 
 function emptyEditState(): EditState {
@@ -82,7 +88,29 @@ function emptyEditState(): EditState {
     newActionDefs: [],
     newActionLinks: [],
     stepOrder: [],
+    fwNameByKey: {},
   }
+}
+
+// The action fields we render, normalized from either an existing
+// WorkflowAction or a locally-added new action def.
+interface ActionData {
+  name: string
+  description: string | null
+  property_name: string | null
+  deadline_property_name: string | null
+  deadline_offset_days: number | null
+  next_workflow_step_name: string | null
+  action_type: string | null
+  matter_column_name: string | null
+  property_to_check: string | null
+  required_workflow_step: string | null
+}
+
+interface ActionDisplay {
+  id: string | null
+  clientId: string | null
+  data: ActionData
 }
 
 interface OptionDisplay {
@@ -90,7 +118,22 @@ interface OptionDisplay {
   clientId: string | null
   name: string
   displayName: string
-  actions: { id: string | null; clientId: string | null; displayName: string }[]
+  actions: ActionDisplay[]
+}
+
+function actionDataFromAction(a: WorkflowAction): ActionData {
+  return {
+    name: a.name,
+    description: a.description,
+    property_name: a.property_name,
+    deadline_property_name: a.deadline_property_name,
+    deadline_offset_days: a.deadline_offset_days,
+    next_workflow_step_name: a.next_workflow_step_name,
+    action_type: a.action_type,
+    matter_column_name: a.matter_column_name,
+    property_to_check: a.property_to_check,
+    required_workflow_step: a.required_workflow_step,
+  }
 }
 
 // Minimal step info needed by StepEditCard — works for both existing and new steps
@@ -99,6 +142,7 @@ interface StepCardInfo {
   displayName: string
   ordinal: number
   isNew?: boolean
+  fwName: string | null
 }
 
 let _clientIdSeq = 0
@@ -387,6 +431,87 @@ function AddStepForm({
   )
 }
 
+// ── Action card ───────────────────────────────────────────────────────────────
+
+function ActionLine({
+  label,
+  value,
+}: {
+  label: string
+  value: string | number | null | undefined
+}) {
+  if (value === null || value === undefined || value === "") return null
+  return (
+    <div>
+      <span className="opacity-70">{label}: </span>
+      <span className="font-medium">{value}</span>
+    </div>
+  )
+}
+
+function ActionCard({ action, onRemove }: { action: ActionDisplay; onRemove?: () => void }) {
+  const d = action.data
+  const isDeadline = d.action_type === "DEADLINE"
+
+  return (
+    <div
+      className={cn(
+        "group rounded-md border px-3 py-2 text-xs",
+        isDeadline
+          ? "border-yellow-200 bg-yellow-50 text-yellow-900"
+          : "border-green-200 bg-green-50 text-green-900"
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-semibold">
+          {isDeadline ? "Deadline Action" : "Action"}: {d.name}
+        </span>
+        {onRemove && (
+          <button
+            onClick={onRemove}
+            className={cn(
+              "opacity-0 group-hover:opacity-100 hover:text-destructive p-0.5 rounded transition-all shrink-0",
+              isDeadline ? "text-yellow-700/60" : "text-green-700/60"
+            )}
+            title="Remove action"
+          >
+            <XIcon className="size-3" />
+          </button>
+        )}
+      </div>
+
+      {isDeadline ? (
+        <div className="mt-1.5 space-y-1.5">
+          <div className="space-y-0.5">
+            <ActionLine label="description" value={d.description} />
+            <ActionLine label="property checked" value={d.property_to_check} />
+            {d.required_workflow_step && (
+              <div className="opacity-90">{d.required_workflow_step}</div>
+            )}
+          </div>
+          <div className="space-y-0.5">
+            <ActionLine label="property set" value={d.property_name} />
+            <ActionLine label="matter column name set" value={d.matter_column_name} />
+          </div>
+          <ActionLine label="move to step" value={d.next_workflow_step_name} />
+        </div>
+      ) : (
+        <div className="mt-1.5 space-y-1.5">
+          {d.description && <div className="opacity-90">{d.description}</div>}
+          <ActionLine label="property set" value={d.property_name} />
+          {d.deadline_property_name && (
+            <ActionLine
+              label="deadline"
+              value={`${d.deadline_property_name} in ${d.deadline_offset_days}`}
+            />
+          )}
+          <ActionLine label="move to step" value={d.next_workflow_step_name} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Option edit row ───────────────────────────────────────────────────────────
 
 function OptionEditRow({
@@ -424,7 +549,12 @@ function OptionEditRow({
     <div className="rounded-md border bg-background px-3 py-2.5 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <span className="text-sm font-medium">{option.displayName}</span>
+          <span
+            className="inline-flex items-center rounded-md px-2.5 py-1 text-sm font-medium text-white shadow-sm"
+            style={{ backgroundColor: "#eb4395" }}
+          >
+            {option.displayName}
+          </span>
           <span className="ml-2 text-xs text-muted-foreground font-mono">{option.name}</span>
         </div>
         <button
@@ -437,19 +567,13 @@ function OptionEditRow({
       </div>
 
       {option.actions.length > 0 && (
-        <div className="pl-1 space-y-0.5">
+        <div className="space-y-1.5">
           {option.actions.map((a, i) => (
-            <div key={a.id ?? a.clientId ?? i} className="flex items-center gap-1.5 text-xs group">
-              <span className="text-muted-foreground shrink-0">•</span>
-              <span className="flex-1 truncate">{a.displayName}</span>
-              <button
-                onClick={() => onRemoveAction(a.id, a.clientId)}
-                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-0.5 rounded transition-all"
-                title="Remove action"
-              >
-                <XIcon className="size-3" />
-              </button>
-            </div>
+            <ActionCard
+              key={a.id ?? a.clientId ?? i}
+              action={a}
+              onRemove={() => onRemoveAction(a.id, a.clientId)}
+            />
           ))}
         </div>
       )}
@@ -478,6 +602,16 @@ function OptionEditRow({
   )
 }
 
+// ── "main path" lozenge ───────────────────────────────────────────────────────
+
+function MainBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide bg-pink-50 text-pink-700 ring-1 ring-inset ring-pink-700/10">
+      main
+    </span>
+  )
+}
+
 // ── Step edit card ────────────────────────────────────────────────────────────
 
 function StepEditCard({
@@ -494,6 +628,7 @@ function StepEditCard({
   onRemoveAction,
   onAddAction,
   onRemoveStep,
+  onToggleMainPath,
 }: {
   dragKey: string
   step: StepCardInfo
@@ -527,8 +662,14 @@ function StepEditCard({
         }
   ) => void
   onRemoveStep?: () => void
+  onToggleMainPath: (checked: boolean) => void
 }) {
   const [showAddOption, setShowAddOption] = useState(false)
+  // Deadline actions that are unlocked by (require) this step, listed after the
+  // step's own default actions.
+  const stepDeadlineActions = allActions.filter(
+    (a) => a.action_type === "DEADLINE" && a.required_workflow_step === step.name
+  )
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: dragKey })
   const style = {
@@ -570,6 +711,16 @@ function StepEditCard({
                 {step.isNew && (
                   <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
                 )}
+                {step.fwName === "main" && <MainBadge />}
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-[#eb4395] cursor-pointer"
+                    checked={step.fwName === "main"}
+                    onChange={(e) => onToggleMainPath(e.target.checked)}
+                  />
+                  main path
+                </label>
               </div>
             ) : (
               <div>
@@ -578,6 +729,7 @@ function StepEditCard({
                   {step.isNew && (
                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0">New</Badge>
                   )}
+                  {step.fwName === "main" && <MainBadge />}
                 </div>
                 <p className="text-xs text-muted-foreground font-mono mt-0.5">{step.name}</p>
                 <p className="text-xs text-muted-foreground">ordinal: {step.ordinal}</p>
@@ -631,6 +783,20 @@ function StepEditCard({
             <PlusIcon className="size-3 mr-1" />
             Add option
           </Button>
+        )}
+
+        {stepDeadlineActions.length > 0 && (
+          <div className="space-y-1.5 pt-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              Deadline actions requiring this step
+            </p>
+            {stepDeadlineActions.map((a) => (
+              <ActionCard
+                key={a.id}
+                action={{ id: a.id, clientId: null, data: actionDataFromAction(a) }}
+              />
+            ))}
+          </div>
         )}
       </CardContent>
       )}
@@ -725,6 +891,15 @@ export function WorkflowEditPage() {
     })
   }
 
+  // Effective fw_name for a step key, applying any local override.
+  function effectiveFwName(key: string, original: string | null): string | null {
+    return key in editState.fwNameByKey ? editState.fwNameByKey[key] : original
+  }
+
+  const fwNamesChanged = sortedSteps.some(
+    (s) => effectiveFwName(s.id, s.fw_name) !== s.fw_name
+  )
+
   const hasChanges =
     editState.removedOptionIds.size > 0 ||
     editState.removedActionLinks.length > 0 ||
@@ -732,9 +907,34 @@ export function WorkflowEditPage() {
     editState.newOptions.length > 0 ||
     editState.newActionDefs.length > 0 ||
     editState.newActionLinks.length > 0 ||
-    stepsReordered
+    stepsReordered ||
+    fwNamesChanged
 
   // ── Visible option builders ────────────────────────────────────────────────
+
+  // Action data for an action referenced by a link — either an existing action
+  // (looked up in allActions) or a locally-added new action def.
+  function dataForLink(l: NewActionLink): ActionData {
+    if (l.actionId) {
+      const a = allActions.find((x) => x.id === l.actionId)
+      if (a) return actionDataFromAction(a)
+    }
+    const def = l.actionClientId
+      ? editState.newActionDefs.find((d) => d.clientId === l.actionClientId)
+      : undefined
+    return {
+      name: def?.name ?? l.displayName,
+      description: def?.description || null,
+      property_name: def?.propertyName || null,
+      deadline_property_name: def?.deadlinePropertyName || null,
+      deadline_offset_days: def?.deadlineOffsetDays ? parseInt(def.deadlineOffsetDays, 10) : null,
+      next_workflow_step_name: def?.nextWorkflowStepName || null,
+      action_type: null,
+      matter_column_name: null,
+      property_to_check: null,
+      required_workflow_step: null,
+    }
+  }
 
   function getVisibleOptionsForStep(step: WorkflowStep): OptionDisplay[] {
     const existing = step.options
@@ -755,11 +955,15 @@ export function WorkflowEditPage() {
             .map((a) => ({
               id: a.id,
               clientId: null as string | null,
-              displayName: a.description ?? a.name,
+              data: actionDataFromAction(a),
             })),
           ...editState.newActionLinks
             .filter((l) => l.optionId === o.id)
-            .map((l) => ({ id: l.actionId, clientId: l.actionClientId, displayName: l.displayName })),
+            .map((l) => ({
+              id: l.actionId,
+              clientId: l.actionClientId,
+              data: dataForLink(l),
+            })),
         ],
       }))
 
@@ -772,7 +976,11 @@ export function WorkflowEditPage() {
         displayName: o.displayName,
         actions: editState.newActionLinks
           .filter((l) => l.optionClientId === o.clientId)
-          .map((l) => ({ id: l.actionId, clientId: l.actionClientId, displayName: l.displayName })),
+          .map((l) => ({
+            id: l.actionId,
+            clientId: l.actionClientId,
+            data: dataForLink(l),
+          })),
       }))
 
     return [...existing, ...added]
@@ -788,7 +996,11 @@ export function WorkflowEditPage() {
         displayName: o.displayName,
         actions: editState.newActionLinks
           .filter((l) => l.optionClientId === o.clientId)
-          .map((l) => ({ id: l.actionId, clientId: l.actionClientId, displayName: l.displayName })),
+          .map((l) => ({
+            id: l.actionId,
+            clientId: l.actionClientId,
+            data: dataForLink(l),
+          })),
       }))
   }
 
@@ -948,6 +1160,13 @@ export function WorkflowEditPage() {
     }
   }
 
+  function setMainPath(key: string, checked: boolean) {
+    setEditState((prev) => ({
+      ...prev,
+      fwNameByKey: { ...prev.fwNameByKey, [key]: checked ? "main" : null },
+    }))
+  }
+
   async function handleSave() {
     if (!id) return
     setSaving(true)
@@ -962,10 +1181,14 @@ export function WorkflowEditPage() {
         name: s.name,
         display_name: s.displayName,
         ordinal: ordinalByKey.get(s.clientId) ?? s.ordinal,
+        fw_name: editState.fwNameByKey[s.clientId] ?? null,
       })),
       reorder_steps: sortedSteps
         .filter((s) => (ordinalByKey.get(s.id) ?? s.ordinal) !== s.ordinal)
         .map((s) => ({ id: s.id, ordinal: ordinalByKey.get(s.id) })),
+      set_step_fw_name: sortedSteps
+        .filter((s) => effectiveFwName(s.id, s.fw_name) !== s.fw_name)
+        .map((s) => ({ id: s.id, fw_name: effectiveFwName(s.id, s.fw_name) })),
       new_options: editState.newOptions.map((o) => ({
         client_id: o.clientId,
         step_name: o.stepName,
@@ -1079,7 +1302,7 @@ export function WorkflowEditPage() {
                       key={key}
                       dragKey={key}
                       rollup={rollup}
-                      step={{ name: existing.name, displayName: existing.display_name, ordinal: rank }}
+                      step={{ name: existing.name, displayName: existing.display_name, ordinal: rank, fwName: effectiveFwName(existing.id, existing.fw_name) }}
                       rank={rank}
                       visibleOptions={getVisibleOptionsForStep(existing)}
                       allActions={allActions}
@@ -1091,6 +1314,7 @@ export function WorkflowEditPage() {
                       }
                       onRemoveAction={removeAction}
                       onAddAction={addAction}
+                      onToggleMainPath={(checked) => setMainPath(existing.id, checked)}
                     />
                   )
                 }
@@ -1101,7 +1325,7 @@ export function WorkflowEditPage() {
                     key={key}
                     dragKey={key}
                     rollup={rollup}
-                    step={{ name: step.name, displayName: step.displayName, ordinal: rank, isNew: true }}
+                    step={{ name: step.name, displayName: step.displayName, ordinal: rank, isNew: true, fwName: effectiveFwName(step.clientId, null) }}
                     rank={rank}
                     visibleOptions={getVisibleOptionsForNewStep(step)}
                     allActions={allActions}
@@ -1114,6 +1338,7 @@ export function WorkflowEditPage() {
                     onRemoveAction={removeAction}
                     onAddAction={addAction}
                     onRemoveStep={() => removeNewStep(step.clientId)}
+                    onToggleMainPath={(checked) => setMainPath(step.clientId, checked)}
                   />
                 )
               })}

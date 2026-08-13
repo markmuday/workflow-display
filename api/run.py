@@ -126,9 +126,10 @@ def save_workflow(id):
     # 0. Create new steps (must happen before new options, which reference step by name)
     for step in body.get('new_steps', []):
         execute(
-            '''INSERT INTO workflow_step (name, display_name, ordinal, workflow_id, workflow_name)
-               VALUES (%s, %s, %s, %s, %s)''',
-            (step['name'], step['display_name'], step.get('ordinal', 0), id, workflow['name'])
+            '''INSERT INTO workflow_step (name, display_name, ordinal, fw_name, workflow_id, workflow_name)
+               VALUES (%s, %s, %s, %s, %s, %s)''',
+            (step['name'], step['display_name'], step.get('ordinal', 0),
+             step.get('fw_name'), id, workflow['name'])
         )
 
     # 0b. Reorder existing steps (renumbered to contiguous ordinals by the client)
@@ -136,6 +137,16 @@ def save_workflow(id):
         execute(
             'UPDATE workflow_step SET ordinal = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s',
             (r['ordinal'], r['id'])
+        )
+
+    # 0c. Update fw_name layout hints on existing steps.
+    # fw_name is a legacy column (formerly "freshworks name") from deprecated
+    # functionality; it's unused otherwise, so we repurpose it to flag a step
+    # as being on the workflow's "main path" (value 'main' or null).
+    for r in body.get('set_step_fw_name', []):
+        execute(
+            'UPDATE workflow_step SET fw_name = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s',
+            (r.get('fw_name'), r['id'])
         )
 
     # 1. Remove action links from existing options

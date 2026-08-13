@@ -21,6 +21,8 @@ export interface WorkflowAction {
   deadline_offset_days: number | null
   deadline_property_name: string | null
   deadline_property_display_name: string | null
+  property_to_check: string | null
+  required_workflow_step: string | null
   workflow_name: string
   workflow_option_id: string
 }

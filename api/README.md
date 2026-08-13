@@ -42,7 +42,21 @@ docker run -p 8081:8081 --env-file .env workflow-display
 | POST | `/api/v1/workflow` | Create a workflow |
 | GET | `/api/v1/workflow/:id` | Get workflow with steps, options, and actions |
 | GET | `/api/v1/workflow/:id/actions` | List actions for a workflow |
-| POST | `/api/v1/workflow/:id/save` | Save workflow changes (steps, options, action links) |
+| POST | `/api/v1/workflow/:id/save` | Save workflow changes (new/reordered steps, options, action links) |
+
+### `/save` payload
+
+The editor sends a single batch of changes:
+
+| Field | Description |
+|-------|-------------|
+| `new_steps` | Steps to create (`name`, `display_name`, `ordinal`) |
+| `reorder_steps` | Existing steps whose ordinal changed (`id`, `ordinal`); renumbered to a contiguous `1..N` sequence |
+| `new_options` / `remove_options` | Options to create / delete (options reference their step by name) |
+| `new_actions` | New action records to create |
+| `new_action_links` / `remove_action_links` | Option-to-action links to add / remove |
+
+New steps are inserted first (options reference steps by name), then reorders, removals, and additions are applied.
 
 ## Architecture
 
