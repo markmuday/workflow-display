@@ -44,9 +44,14 @@ export function WorkflowDetailPage() {
             <Badge variant="secondary" className="uppercase text-xs">{workflow.us_state}</Badge>
             <Badge variant="outline" className="text-xs">{workflow.type}</Badge>
           </div>
-          <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${workflow.id}/edit`)}>
-            Edit
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${workflow.id}/flow`)}>
+              Flow view
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => navigate(`/workflow/${workflow.id}/edit`)}>
+              Edit
+            </Button>
+          </div>
         </div>
         {workflow.description && (
           <p className="text-muted-foreground mt-1 text-sm">{workflow.description}</p>

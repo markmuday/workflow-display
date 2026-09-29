@@ -1,0 +1,34 @@
+{
+  "groups": {},
+  "spines": {},
+  "steps": {
+    "UT_402_AWAITING_FINAL_DECISION": {
+      "pin": {
+        "col": 1,
+        "row": 9
+      }
+    },
+    "UT_402_CLIENT_APPROVES_RESPONSE": {
+      "spine": "objection"
+    },
+    "UT_402_CLIENT_DECLINES_RESPONSE": {
+      "rowNudge": 1
+    },
+    "UT_402_HEARING_SCHEDULED": {
+      "spine": "objection"
+    },
+    "UT_402_OBJECTION_RECEIVED": {
+      "spine": "objection"
+    },
+    "UT_402_REQUEST_TO_SUBMIT": {
+      "pin": {
+        "col": 1,
+        "row": 8
+      }
+    },
+    "UT_402_RESPONSE_FILED": {
+      "spine": "objection"
+    }
+  },
+  "version": 1
+}

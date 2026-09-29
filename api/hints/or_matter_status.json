@@ -1,0 +1,72 @@
+{
+  "groups": {},
+  "spines": {
+    "objection": {
+      "label": "Objection"
+    }
+  },
+  "steps": {
+    "OR_COMPLETED": {
+      "spine": "main"
+    },
+    "OR_COURT_FOLLOWUP_REQUIRED": {
+      "pin": {
+        "col": 1,
+        "row": 7
+      },
+      "spine": "main"
+    },
+    "OR_DISENGAGED": {
+      "spine": "main"
+    },
+    "OR_DRAFTING": {
+      "spine": "main"
+    },
+    "OR_DRAFTING_COMPLETED": {
+      "spine": "main"
+    },
+    "OR_FOLLOW_UP_ABOUT_FINAL_ORDER": {
+      "spine": "main"
+    },
+    "OR_GRANTED": {
+      "spine": "main"
+    },
+    "OR_HEARING_SCHEDULED": {
+      "spine": "objection"
+    },
+    "OR_OBJECTION_RECEIVED": {
+      "spine": "objection"
+    },
+    "OR_OBJECTION_RESPONSE_APPROVED": {
+      "spine": "objection"
+    },
+    "OR_PAID": {
+      "spine": "main"
+    },
+    "OR_PROPOSED_MATTER": {
+      "spine": "main"
+    },
+    "OR_READY_FOR_REVIEW": {
+      "spine": "main"
+    },
+    "OR_READY_TO_DISENGAGE": {
+      "spine": "main"
+    },
+    "OR_READY_TO_DRAFT": {
+      "spine": "main"
+    },
+    "OR_READY_TO_FILE_EFILE": {
+      "spine": "main"
+    },
+    "OR_RESPONSE_FILED": {
+      "spine": "objection"
+    },
+    "OR_WAITING_FOR_COURT": {
+      "spine": "main"
+    },
+    "OR_WAITING_FOR_COURT_CONFIRMATION": {
+      "spine": "objection"
+    }
+  },
+  "version": 1
+}
