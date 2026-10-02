@@ -222,3 +222,4 @@ __marimo__/
 .vite/
 
 /ui/node_modules
+/api/static

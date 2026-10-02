@@ -1,4 +1,8 @@
-from flask import Blueprint, jsonify, Flask, request
+import json
+import re
+from pathlib import Path
+
+from flask import Blueprint, jsonify, Flask, request, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 from flask_cors import CORS
 from flask_http_middleware import MiddlewareManager, BaseHTTPMiddleware
@@ -198,6 +202,48 @@ def save_workflow(id):
     return jsonify({'ok': True})
 
 
+# Layout hints live in api/hints/<workflow_name>.json so they can be committed
+# alongside the code and edited by hand. Keys in "steps" are step names.
+HINTS_DIR = Path(__file__).parent / 'hints'
+WORKFLOW_NAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+EMPTY_HINTS = {'version': 1, 'steps': {}, 'spines': {}, 'groups': {}}
+
+
+def _hints_path(workflow_id):
+    workflows = query('SELECT name FROM workflow WHERE id = %s', (workflow_id,))
+    if not workflows:
+        return None
+    name = workflows[0]['name']
+    if not WORKFLOW_NAME_RE.match(name):
+        raise ValueError(f'unsafe workflow name for hints file: {name!r}')
+    return HINTS_DIR / f'{name}.json'
+
+
+@api_v1.route('/workflow/<id>/hints', methods=['GET'])
+def get_workflow_hints(id):
+    path = _hints_path(id)
+    if path is None:
+        return jsonify({'error': 'not found'}), 404
+    if not path.exists():
+        return jsonify(EMPTY_HINTS)
+    return jsonify({**EMPTY_HINTS, **json.loads(path.read_text())})
+
+
+@api_v1.route('/workflow/<id>/hints', methods=['PUT'])
+def put_workflow_hints(id):
+    path = _hints_path(id)
+    if path is None:
+        return jsonify({'error': 'not found'}), 404
+    body = request.get_json()
+    if not isinstance(body, dict) or not isinstance(body.get('steps', {}), dict):
+        return jsonify({'error': 'hints must be an object with a "steps" object'}), 400
+    HINTS_DIR.mkdir(exist_ok=True)
+    tmp = path.with_suffix('.json.tmp')
+    tmp.write_text(json.dumps(body, indent=2, sort_keys=True) + '\n')
+    tmp.replace(path)
+    return jsonify({'ok': True})
+
+
 # Create app
 app = Flask(__name__)
 app.json = CustomJSONProvider(app)
@@ -216,3 +262,18 @@ CORS(api_v1)
 
 # Register blueprint AFTER routes are defined
 app.register_blueprint(api_v1)
+
+
+# Serve the built UI (copied to ./static by the root Dockerfile). Unknown paths
+# fall back to index.html so react-router can handle client-side routes.
+STATIC_DIR = Path(__file__).parent / 'static'
+
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def spa(path):
+    if path.startswith('api/'):
+        return jsonify({'error': 'not found'}), 404
+    if path and (STATIC_DIR / path).is_file():
+        return send_from_directory(STATIC_DIR, path)
+    return send_from_directory(STATIC_DIR, 'index.html')
