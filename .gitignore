@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!ui/src/lib/
 lib64/
 parts/
 sdist/
@@ -223,3 +224,4 @@ __marimo__/
 
 /ui/node_modules
 /api/static
+**/.foo
