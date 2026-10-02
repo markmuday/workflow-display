@@ -72,7 +72,10 @@ export function WorkflowFlowPage() {
   const { staleHints, messages } = layout.warnings
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div
+      className="flex min-h-screen flex-col"
+      style={{ "--primary": "#ffbdd5", "--primary-foreground": "#4a1026" } as React.CSSProperties}
+    >
       <header className="sticky top-0 left-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background px-6">
         <div className="flex items-center gap-3 min-w-0">
           <Button variant="ghost" size="sm" className="-ml-2" onClick={() => navigate(`/workflow/${workflow.id}`)}>

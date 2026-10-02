@@ -110,7 +110,7 @@ export function SpineCanvas({ layout, selection, highlight, editing, showAllLabe
         >
           <div
             className={`absolute -top-2.5 left-3 rounded-full border bg-background px-2 text-[10px] font-semibold uppercase leading-4 tracking-wide ${
-              s.name === "main" ? "border-primary/30 text-primary/80" : "border-sky-500/30 text-sky-600"
+              s.name === "main" ? "border-primary text-foreground/70" : "border-sky-500/30 text-sky-600"
             }`}
           >
             {s.label}
@@ -226,7 +226,7 @@ export function SpineCanvas({ layout, selection, highlight, editing, showAllLabe
                       className={`flex items-center rounded-md px-2.5 text-xs font-medium text-left truncate transition ${
                         hasTarget
                           ? "bg-primary text-primary-foreground hover:bg-primary/85"
-                          : "border border-primary/40 text-primary bg-primary/5"
+                          : "border border-primary text-foreground bg-primary/15"
                       } ${active ? "ring-2 ring-offset-1 ring-primary" : ""}`}
                       style={{ height: OPTION_H }}
                       title={o.description ?? o.display_name}

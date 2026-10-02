@@ -2,7 +2,7 @@ import json
 import re
 from pathlib import Path
 
-from flask import Blueprint, jsonify, Flask, request
+from flask import Blueprint, jsonify, Flask, request, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 from flask_cors import CORS
 from flask_http_middleware import MiddlewareManager, BaseHTTPMiddleware
@@ -251,3 +251,18 @@ CORS(api_v1)
 
 # Register blueprint AFTER routes are defined
 app.register_blueprint(api_v1)
+
+
+# Serve the built UI (copied to ./static by the root Dockerfile). Unknown paths
+# fall back to index.html so react-router can handle client-side routes.
+STATIC_DIR = Path(__file__).parent / 'static'
+
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def spa(path):
+    if path.startswith('api/'):
+        return jsonify({'error': 'not found'}), 404
+    if path and (STATIC_DIR / path).is_file():
+        return send_from_directory(STATIC_DIR, path)
+    return send_from_directory(STATIC_DIR, 'index.html')
