@@ -19,6 +19,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { Button } from "@/components/ui/button"
+import { WorkflowNav } from "@/components/WorkflowNav"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -1231,14 +1232,9 @@ export function WorkflowEditPage() {
     <div className="p-8 max-w-3xl mx-auto">
       {/* Header */}
       <div className="mb-6">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="mb-4 -ml-2"
-          onClick={() => navigate(`/workflow/${id}`)}
-        >
-          ← Back
-        </Button>
+        <div className="mb-4">
+          <WorkflowNav workflowId={workflow.id} current="edit" unsavedChanges={hasChanges && !saving} />
+        </div>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3">

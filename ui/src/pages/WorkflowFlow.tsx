@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import { AlertTriangle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { WorkflowNav } from "@/components/WorkflowNav"
 import { EMPTY_HINTS, type StepHint, type WorkflowHints } from "@/types/hints"
 import type { WorkflowDetail } from "@/types/workflow"
 import { InspectPanel } from "@/flow/InspectPanel"
@@ -14,7 +15,6 @@ type SaveState = "idle" | "saving" | "saved" | "error"
 
 export function WorkflowFlowPage() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null)
   const [hints, setHints] = useState<WorkflowHints>(EMPTY_HINTS)
   const [error, setError] = useState<string | null>(null)
@@ -78,9 +78,7 @@ export function WorkflowFlowPage() {
     >
       <header className="sticky top-0 left-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background px-6">
         <div className="flex items-center gap-3 min-w-0">
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => navigate(`/workflow/${workflow.id}`)}>
-            ← Grid view
-          </Button>
+          <WorkflowNav workflowId={workflow.id} current="flow" />
           <h1 className="text-lg font-semibold truncate">{workflow.display_name}</h1>
           <Badge variant="secondary" className="uppercase text-xs">{workflow.us_state}</Badge>
         </div>
@@ -97,7 +95,7 @@ export function WorkflowFlowPage() {
             </span>
           )}
           <Button size="sm" variant={editing ? "default" : "outline"} onClick={() => setEditing(!editing)}>
-            {editing ? "Done editing" : "Edit layout"}
+            {editing ? "Done adding hints" : "Add Layout Hints"}
           </Button>
         </div>
       </header>
