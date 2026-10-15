@@ -1,3 +1,4 @@
+import os
 from contextvars import ContextVar
 from functools import wraps
 from uuid import uuid4
@@ -15,14 +16,22 @@ def get_transaction_id():
     return transaction_context.get()
 
 
+connector = Connector()
+
+# Reported to Postgres as application_name, so a connection in pg_stat_activity can be traced
+# back to the service holding it. Cloud Run sets K_SERVICE to the deployed service name, which
+# already distinguishes environments; it is unset locally.
+application_name = os.environ.get('K_SERVICE') or 'workflow-display-local'
+
+
 def create_gcp_connector():
-    connector = Connector()
     return connector.connect(
         settings.db_connection,
         'pg8000',
         user=settings.db_username,
         password=settings.db_password,
-        db=settings.db_name
+        db=settings.db_name,
+        application_name=application_name
     )
 
 
